@@ -13,13 +13,17 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
+import jakarta.annotation.PostConstruct;
 
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class WorkflowWorkerService {
     
@@ -36,12 +40,62 @@ public class WorkflowWorkerService {
     private final TaskRegistry taskRegistry;
     private final ConditionEvaluatorService conditionEvaluatorService;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
+    
+    private final AtomicInteger queuedItemsProcessed = new AtomicInteger(0);
+    private final AtomicInteger stuckStepsRecovered = new AtomicInteger(0);
+    private final AtomicInteger waitStepsProcessed = new AtomicInteger(0);
+    
+    private Counter workflowExecutionCounter;
+    private Counter workflowStepCompletedCounter;
+    private Counter workflowStepFailedCounter;
+    private Counter workflowExecutionFailedCounter;
+    private Counter workflowExecutionCancelledCounter;
+    
+    private Timer workflowExecutionTimer;
+    private Timer workflowStepTimer;
+    
+    public WorkflowWorkerService(
+            WorkflowExecutionRepository workflowExecutionRepository,
+            ExecutionStepRepository executionStepRepository,
+            ExecutionQueueRepository executionQueueRepository,
+            ExecutionHistoryRepository executionHistoryRepository,
+            TaskRegistry taskRegistry,
+            ConditionEvaluatorService conditionEvaluatorService,
+            ObjectMapper objectMapper,
+            MeterRegistry meterRegistry) {
+        this.workflowExecutionRepository = workflowExecutionRepository;
+        this.executionStepRepository = executionStepRepository;
+        this.executionQueueRepository = executionQueueRepository;
+        this.executionHistoryRepository = executionHistoryRepository;
+        this.taskRegistry = taskRegistry;
+        this.conditionEvaluatorService = conditionEvaluatorService;
+        this.objectMapper = objectMapper;
+        this.meterRegistry = meterRegistry;
+    }
+    
+    @PostConstruct
+    public void initializeMetrics() {
+        workflowExecutionCounter = meterRegistry.counter("workflow_executions", "status", "running");
+        workflowStepCompletedCounter = meterRegistry.counter("workflow_steps", "event", "completed");
+        workflowStepFailedCounter = meterRegistry.counter("workflow_steps", "event", "failed");
+        workflowExecutionFailedCounter = meterRegistry.counter("workflow_executions", "status", "failed");
+        workflowExecutionCancelledCounter = meterRegistry.counter("workflow_executions", "status", "cancelled");
+        
+        workflowExecutionTimer = meterRegistry.timer("workflow_execution_duration_seconds");
+        workflowStepTimer = meterRegistry.timer("workflow_step_duration_seconds");
+        
+        // Register gauges with proper method signatures
+        meterRegistry.gauge("workflow_queued_items", queuedItemsProcessed);
+        meterRegistry.gauge("workflow_stuck_steps", stuckStepsRecovered);
+        meterRegistry.gauge("workflow_wait_steps", waitStepsProcessed);
+    }
     
     @Scheduled(fixedDelay = 1000) // Poll every second
     @Transactional
     public void processExecutionQueue() {
         try {
-            // Get queued items with FOR UPDATE SKIP LOCKED
+            // Get queued items with FOR UPDATE SKIP LOCKED, respecting run_after_ts
             List<ExecutionQueue> queuedItems = executionQueueRepository
                     .findQueuedItemsForProcessing(OffsetDateTime.now(), batchSize);
             
@@ -53,6 +107,13 @@ public class WorkflowWorkerService {
             
             for (ExecutionQueue queueItem : queuedItems) {
                 try {
+                    // Check if item is ready to run
+                    if (queueItem.getScheduledAt().isAfter(OffsetDateTime.now())) {
+                        log.debug("Queue item {} not ready yet, scheduled for: {}", 
+                                queueItem.getId(), queueItem.getScheduledAt());
+                        continue;
+                    }
+                    
                     processQueueItem(queueItem);
                 } catch (Exception e) {
                     log.error("Error processing queue item: {}", queueItem.getId(), e);
@@ -86,6 +147,26 @@ public class WorkflowWorkerService {
         }
     }
     
+    @Scheduled(fixedDelay = 10000) // Every 10 seconds
+    @Transactional
+    public void processWaitStates() {
+        try {
+            // Find Wait steps that are ready to proceed
+            List<ExecutionStep> readyWaitSteps = executionStepRepository
+                    .findWaitStepsReadyToProceed(OffsetDateTime.now());
+            
+            if (!readyWaitSteps.isEmpty()) {
+                log.info("Processing {} Wait steps ready to proceed", readyWaitSteps.size());
+                
+                for (ExecutionStep step : readyWaitSteps) {
+                    processWaitStep(step);
+                }
+            }
+        } catch (Exception e) {
+            log.error("Error processing Wait states", e);
+        }
+    }
+    
     private void processQueueItem(ExecutionQueue queueItem) {
         Long executionId = queueItem.getExecutionId();
         
@@ -93,11 +174,24 @@ public class WorkflowWorkerService {
         WorkflowExecution execution = workflowExecutionRepository.findById(executionId)
                 .orElseThrow(() -> new IllegalArgumentException("Execution not found: " + executionId));
         
+        // Check if execution is cancelled
+        if (execution.getStatus() == WorkflowExecution.ExecutionStatus.CANCELLED) {
+            log.info("Skipping cancelled execution: {}", executionId);
+            executionQueueRepository.delete(queueItem);
+            return;
+        }
+        
         ExecutionStep currentStep = executionStepRepository
                 .findByExecutionIdAndStepName(executionId, execution.getCurrentState())
                 .orElseThrow(() -> new IllegalArgumentException("Current step not found for execution: " + executionId));
         
-        // Mark step as running
+        if ("Wait".equals(currentStep.getStepType())) {
+            log.debug("Skipping Wait step {} in main queue processor - will be handled by wait state processor", 
+                    currentStep.getStepName());
+            return;
+        }
+        
+                // Mark step as running
         currentStep.setStatus(ExecutionStep.StepStatus.RUNNING);
         currentStep.setStartedAt(OffsetDateTime.now());
         executionStepRepository.save(currentStep);
@@ -105,6 +199,9 @@ public class WorkflowWorkerService {
         // Add to history
         addExecutionHistory(executionId, currentStep.getStepName(), "STEP_STARTED", 
                 Map.of("stepType", currentStep.getStepType()));
+        
+        // Record step start time for metrics
+        Timer.Sample stepTimer = Timer.start(meterRegistry);
         
         try {
             // Execute the step based on its type
@@ -116,6 +213,10 @@ public class WorkflowWorkerService {
                 currentStep.setOutputData(result.getOutput());
                 currentStep.setCompletedAt(OffsetDateTime.now());
                 executionStepRepository.save(currentStep);
+                
+                // Record metrics
+                workflowStepCompletedCounter.increment();
+                stepTimer.stop(workflowStepTimer);
                 
                 addExecutionHistory(executionId, currentStep.getStepName(), "STEP_COMPLETED", 
                         Map.of("output", result.getOutput()));
@@ -130,6 +231,10 @@ public class WorkflowWorkerService {
                 currentStep.setCompletedAt(OffsetDateTime.now());
                 executionStepRepository.save(currentStep);
                 
+                // Record metrics
+                workflowStepFailedCounter.increment();
+                stepTimer.stop(workflowStepTimer);
+                
                 addExecutionHistory(executionId, currentStep.getStepName(), "STEP_FAILED", 
                         Map.of("errorType", result.getErrorType(), "errorMessage", result.getErrorMessage()));
                 
@@ -138,6 +243,9 @@ public class WorkflowWorkerService {
                 execution.setErrorMessage(result.getErrorMessage());
                 execution.setCompletedAt(OffsetDateTime.now());
                 workflowExecutionRepository.save(execution);
+                
+                // Record metrics
+                workflowExecutionFailedCounter.increment();
                 
                 addExecutionHistory(executionId, currentStep.getStepName(), "EXECUTION_FAILED", 
                         Map.of("errorMessage", result.getErrorMessage()));
@@ -152,6 +260,10 @@ public class WorkflowWorkerService {
             currentStep.setCompletedAt(OffsetDateTime.now());
             executionStepRepository.save(currentStep);
             
+            // Record metrics
+            workflowStepFailedCounter.increment();
+            stepTimer.stop(workflowStepTimer);
+            
             addExecutionHistory(executionId, currentStep.getStepName(), "STEP_ERROR", 
                     Map.of("errorMessage", e.getMessage()));
             
@@ -160,10 +272,16 @@ public class WorkflowWorkerService {
             execution.setErrorMessage(e.getMessage());
             execution.setCompletedAt(OffsetDateTime.now());
             workflowExecutionRepository.save(execution);
+            
+            // Record metrics
+            workflowExecutionFailedCounter.increment();
         }
         
         // Remove from queue
         executionQueueRepository.delete(queueItem);
+        
+        // Update processed count
+        queuedItemsProcessed.incrementAndGet();
     }
     
     private TaskResult executeStep(ExecutionStep step, WorkflowExecution execution) {
@@ -177,6 +295,10 @@ public class WorkflowWorkerService {
         } else if ("Choice".equals(stepType)) {
             // Choice state - evaluate conditions
             return executeChoiceStep(step, execution);
+            
+        } else if ("Wait".equals(stepType)) {
+            // Wait state - handle timing
+            return executeWaitStep(step, execution);
             
         } else if ("Success".equals(stepType)) {
             // Success state - execution completed
@@ -251,7 +373,62 @@ public class WorkflowWorkerService {
         return TaskResult.failure("ChoiceError", "No matching choice found and no default specified");
     }
     
+    private TaskResult executeWaitStep(ExecutionStep step, WorkflowExecution execution) {
+        log.info("⏰ Executing Wait step: {} for execution: {}", step.getStepName(), execution.getId());
+        
+        // Parse workflow definition to get wait configuration
+        Map<String, Object> definition = parseWorkflowDefinition(
+                execution.getWorkflowVersion().getDefinitionJsonb());
+        Map<String, Object> states = (Map<String, Object>) definition.get("states");
+        Map<String, Object> currentStateDef = (Map<String, Object>) states.get(step.getStepName());
+        
+        // Check if step should run now or wait
+        OffsetDateTime runAfterTs = step.getRunAfterTs();
+        if (runAfterTs != null && runAfterTs.isAfter(OffsetDateTime.now())) {
+            // Still waiting
+            log.info("⏰ Step {} still waiting, run after: {}", step.getStepName(), runAfterTs);
+            return TaskResult.failure("StillWaiting", "Step is still waiting");
+        }
+        
+        // Step is ready to proceed
+        log.info("⏰ Wait step {} completed, proceeding to next state", step.getStepName());
+        return TaskResult.success(Map.of("waitCompleted", true));
+    }
+    
+    private OffsetDateTime calculateWaitTime(Object stateDef) {
+        if (stateDef instanceof Map) {
+            Map<String, Object> stateMap = (Map<String, Object>) stateDef;
+            
+            // Check for seconds configuration
+            Object secondsObj = stateMap.get("seconds");
+            if (secondsObj instanceof Number) {
+                int seconds = ((Number) secondsObj).intValue();
+                return OffsetDateTime.now().plusSeconds(seconds);
+            }
+            
+            // Check for timestamp configuration
+            Object timestampObj = stateMap.get("timestamp");
+            if (timestampObj instanceof String) {
+                try {
+                    return OffsetDateTime.parse((String) timestampObj);
+                } catch (Exception e) {
+                    log.error("Error parsing timestamp: {}", timestampObj, e);
+                    throw new IllegalArgumentException("Invalid timestamp format: " + timestampObj);
+                }
+            }
+        }
+        
+        // Default to immediate execution
+        return OffsetDateTime.now();
+    }
+    
     private void moveToNextState(WorkflowExecution execution, ExecutionStep currentStep, Map<String, Object> stepOutput) {
+        // Check if execution is cancelled
+        if (execution.getStatus() == WorkflowExecution.ExecutionStatus.CANCELLED) {
+            log.info("Execution {} is cancelled, not scheduling next states", execution.getId());
+            return;
+        }
+        
         // Parse workflow definition to find next state
         Map<String, Object> definition = parseWorkflowDefinition(
                 execution.getWorkflowVersion().getDefinitionJsonb());
@@ -283,6 +460,14 @@ public class WorkflowWorkerService {
                     .maxRetries(3)
                     .build();
             
+            // Handle Wait state configuration
+            if ("Wait".equals(getStepType(states.get(nextState)))) {
+                nextStep.setStatus(ExecutionStep.StepStatus.WAITING);
+                OffsetDateTime runAfterTs = calculateWaitTime(states.get(nextState));
+                nextStep.setRunAfterTs(runAfterTs);
+                log.info("⏰ Setting Wait step {} to run after: {}", nextState, runAfterTs);
+            }
+            
             nextStep = executionStepRepository.save(nextStep);
             
             // Update execution current state
@@ -293,7 +478,7 @@ public class WorkflowWorkerService {
             ExecutionQueue nextQueueItem = ExecutionQueue.builder()
                     .executionId(execution.getId())
                     .priority(0)
-                    .scheduledAt(OffsetDateTime.now())
+                    .scheduledAt(nextStep.getRunAfterTs() != null ? nextStep.getRunAfterTs() : OffsetDateTime.now())
                     .status(ExecutionQueue.QueueStatus.QUEUED)
                     .build();
             
@@ -363,7 +548,46 @@ public class WorkflowWorkerService {
         addExecutionHistory(step.getExecutionId(), step.getStepName(), "STEP_RECOVERED", 
                 Map.of("reason", "Stuck step recovery"));
         
+        // Record metrics
+        stuckStepsRecovered.incrementAndGet();
+        
         log.info("Recovered stuck step: {} for execution: {}", step.getStepName(), step.getExecutionId());
+    }
+    
+    private void processWaitStep(ExecutionStep step) {
+        try {
+            // Get the execution
+            WorkflowExecution execution = workflowExecutionRepository.findById(step.getExecutionId())
+                    .orElseThrow(() -> new IllegalArgumentException("Execution not found: " + step.getExecutionId()));
+            
+            // Check if execution is cancelled
+            if (execution.getStatus() == WorkflowExecution.ExecutionStatus.CANCELLED) {
+                log.info("Execution {} is cancelled, not processing Wait step {}", execution.getId(), step.getStepName());
+                return;
+            }
+            
+            // Mark step as completed
+            step.setStatus(ExecutionStep.StepStatus.COMPLETED);
+            step.setCompletedAt(OffsetDateTime.now());
+            executionStepRepository.save(step);
+            
+            // Record metrics
+            workflowStepCompletedCounter.increment();
+            
+            addExecutionHistory(step.getExecutionId(), step.getStepName(), "WAIT_COMPLETED", 
+                    Map.of("completedAt", OffsetDateTime.now()));
+            
+            // Move to next state
+            moveToNextState(execution, step, Map.of("waitCompleted", true));
+            
+            // Record metrics
+            waitStepsProcessed.incrementAndGet();
+            
+            log.info("Wait step {} completed for execution: {}", step.getStepName(), step.getExecutionId());
+            
+        } catch (Exception e) {
+            log.error("Error processing Wait step: {}", step.getId(), e);
+        }
     }
     
     private Map<String, Object> mergeInputWithOutput(Map<String, Object> output, Map<String, Object> input) {

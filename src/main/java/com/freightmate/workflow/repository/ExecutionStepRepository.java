@@ -21,4 +21,9 @@ public interface ExecutionStepRepository extends JpaRepository<ExecutionStep, Lo
            "WHERE es.status = 'RUNNING' " +
            "AND es.startedAt < :timeoutThreshold")
     List<ExecutionStep> findStuckSteps(@Param("timeoutThreshold") OffsetDateTime timeoutThreshold);
+    
+    @Query("SELECT es FROM ExecutionStep es " +
+           "WHERE es.status = 'WAITING' " +
+           "AND es.runAfterTs <= :currentTime")
+    List<ExecutionStep> findWaitStepsReadyToProceed(@Param("currentTime") OffsetDateTime currentTime);
 }

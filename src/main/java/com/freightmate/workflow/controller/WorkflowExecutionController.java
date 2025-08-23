@@ -85,4 +85,13 @@ public class WorkflowExecutionController {
         
         return ResponseEntity.ok(response);
     }
+    
+    @PutMapping("/{id}/cancel")
+    public ResponseEntity<WorkflowExecutionResponse> cancelExecution(@PathVariable("id") Long executionId) {
+        log.info("Cancelling workflow execution: {}", executionId);
+        
+        WorkflowExecutionResponse response = workflowExecutionService.cancelExecution(executionId);
+        
+        return ResponseEntity.ok(response);
+    }
 }

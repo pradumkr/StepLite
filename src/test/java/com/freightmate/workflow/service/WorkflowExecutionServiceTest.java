@@ -20,11 +20,19 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
+import org.junit.jupiter.api.DisplayName;
+import com.freightmate.workflow.entity.ExecutionStep;
+import com.freightmate.workflow.repository.ExecutionStepRepository;
 
 @DataJpaTest
 @Testcontainers
@@ -63,6 +71,9 @@ class WorkflowExecutionServiceTest {
 
     @Autowired
     private WorkflowVersionRepository workflowVersionRepository;
+
+    @Autowired
+    private ExecutionStepRepository executionStepRepository;
 
     private Workflow testWorkflow;
     private WorkflowVersion testVersion;
@@ -222,5 +233,222 @@ class WorkflowExecutionServiceTest {
         assertThatThrownBy(() -> workflowExecutionService.startExecution(request, null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Workflow version not found: 2.0.0");
+    }
+
+    @Test
+    @DisplayName("Should handle Wait state with seconds configuration")
+    void shouldHandleWaitStateWithSeconds() throws Exception {
+        // Given
+        String workflowDefinition = """
+            {
+                "name": "test_wait_workflow",
+                "version": "1.0",
+                "startAt": "start",
+                "states": {
+                    "start": {
+                        "type": "Task",
+                        "resource": "testService.start",
+                        "next": "wait_state"
+                    },
+                    "wait_state": {
+                        "type": "Wait",
+                        "seconds": 30,
+                        "next": "end"
+                    },
+                    "end": {
+                        "type": "Success"
+                    }
+                }
+            }
+            """;
+        
+        WorkflowVersion version = WorkflowVersion.builder()
+                .workflow(testWorkflow)
+                .version("1.0")
+                .definitionJsonb(workflowDefinition)
+                .isActive(true)
+                .build();
+        version = workflowVersionRepository.save(version);
+
+        WorkflowExecutionRequest request = WorkflowExecutionRequest.builder()
+                .workflowName("test_wait_workflow")
+                .version("1.0")
+                .input(Map.of("test", "data"))
+                .build();
+        
+        // When
+        WorkflowExecutionResponse response = workflowExecutionService.startExecution(request, null);
+        
+        // Then
+        assertThat(response).isNotNull();
+        assertThat(response.getStatus()).isEqualTo("RUNNING");
+        
+        // Verify Wait step was created with correct run_after_ts
+        List<ExecutionStep> steps = executionStepRepository.findByExecutionId(response.getId());
+        ExecutionStep waitStep = steps.stream()
+                .filter(s -> "wait_state".equals(s.getStepName()))
+                .findFirst()
+                .orElse(null);
+        
+        assertThat(waitStep).isNotNull();
+        assertThat(waitStep.getStepType()).isEqualTo("Wait");
+        assertThat(waitStep.getStatus()).isEqualTo(ExecutionStep.StepStatus.WAITING);
+        assertThat(waitStep.getRunAfterTs()).isNotNull();
+        
+        // Should be approximately 30 seconds in the future
+        OffsetDateTime expectedTime = OffsetDateTime.now().plusSeconds(30);
+        assertThat(waitStep.getRunAfterTs()).isCloseTo(expectedTime, within(5, ChronoUnit.SECONDS));
+    }
+    
+    @Test
+    @DisplayName("Should handle Wait state with timestamp configuration")
+    void shouldHandleWaitStateWithTimestamp() throws Exception {
+        // Given
+        String timestamp = "2024-12-31T23:59:59Z";
+        String workflowDefinition = String.format("""
+            {
+                "name": "test_wait_workflow",
+                "version": "1.0",
+                "startAt": "start",
+                "states": {
+                    "start": {
+                        "type": "Task",
+                        "resource": "testService.start",
+                        "next": "wait_state"
+                    },
+                    "wait_state": {
+                        "type": "Wait",
+                        "timestamp": "%s",
+                        "next": "end"
+                    },
+                    "end": {
+                        "type": "Success"
+                    }
+                }
+            }
+            """, timestamp);
+        
+        WorkflowVersion version = WorkflowVersion.builder()
+                .workflow(testWorkflow)
+                .version("1.0")
+                .definitionJsonb(workflowDefinition)
+                .isActive(true)
+                .build();
+        version = workflowVersionRepository.save(version);
+
+        WorkflowExecutionRequest request = WorkflowExecutionRequest.builder()
+                .workflowName("test_wait_workflow")
+                .version("1.0")
+                .input(Map.of("test", "data"))
+                .build();
+        
+        // When
+        WorkflowExecutionResponse response = workflowExecutionService.startExecution(request, null);
+        
+        // Then
+        assertThat(response).isNotNull();
+        assertThat(response.getStatus()).isEqualTo("RUNNING");
+        
+        // Verify Wait step was created with correct run_after_ts
+        List<ExecutionStep> steps = executionStepRepository.findByExecutionId(response.getId());
+        ExecutionStep waitStep = steps.stream()
+                .filter(s -> "wait_state".equals(s.getStepName()))
+                .findFirst()
+                .orElse(null);
+        
+        assertThat(waitStep).isNotNull();
+        assertThat(waitStep.getStepType()).isEqualTo("Wait");
+        assertThat(waitStep.getStatus()).isEqualTo(ExecutionStep.StepStatus.WAITING);
+        assertThat(waitStep.getRunAfterTs()).isNotNull();
+        assertThat(waitStep.getRunAfterTs()).isEqualTo(OffsetDateTime.parse(timestamp));
+    }
+    
+    @Test
+    @DisplayName("Should cancel running workflow execution")
+    void shouldCancelRunningWorkflowExecution() throws Exception {
+        // Given
+        String workflowDefinition = """
+            {
+                "name": "test_cancel_workflow",
+                "version": "1.0",
+                "startAt": "start",
+                "states": {
+                    "start": {
+                        "type": "Task",
+                        "resource": "testService.start",
+                        "next": "end"
+                    },
+                    "end": {
+                        "type": "Success"
+                    }
+                }
+            }
+            """;
+        
+        WorkflowVersion version = WorkflowVersion.builder()
+                .workflow(testWorkflow)
+                .version("1.0")
+                .definitionJsonb(workflowDefinition)
+                .isActive(true)
+                .build();
+        version = workflowVersionRepository.save(version);
+
+        WorkflowExecutionRequest request = WorkflowExecutionRequest.builder()
+                .workflowName("test_cancel_workflow")
+                .version("1.0")
+                .input(Map.of("test", "data"))
+                .build();
+        
+        WorkflowExecutionResponse execution = workflowExecutionService.startExecution(request, null);
+        
+        // When
+        WorkflowExecutionResponse cancelledExecution = workflowExecutionService.cancelExecution(execution.getId());
+        
+        // Then
+        assertThat(cancelledExecution).isNotNull();
+        assertThat(cancelledExecution.getStatus()).isEqualTo("CANCELLED");
+        assertThat(cancelledExecution.getId()).isEqualTo(execution.getId());
+    }
+    
+    @Test
+    @DisplayName("Should not allow cancelling non-running execution")
+    void shouldNotAllowCancellingNonRunningExecution() throws Exception {
+        // Given
+        String workflowDefinition = """
+            {
+                "name": "test_cancel_workflow",
+                "version": "1.0",
+                "startAt": "start",
+                "states": {
+                    "start": {
+                        "type": "Success"
+                    }
+                }
+            }
+            """;
+        
+        WorkflowVersion version = WorkflowVersion.builder()
+                .workflow(testWorkflow)
+                .version("1.0")
+                .definitionJsonb(workflowDefinition)
+                .isActive(true)
+                .build();
+        version = workflowVersionRepository.save(version);
+
+        WorkflowExecutionRequest request = WorkflowExecutionRequest.builder()
+                .workflowName("test_cancel_workflow")
+                .version("1.0")
+                .input(Map.of("test", "data"))
+                .build();
+        
+        WorkflowExecutionResponse execution = workflowExecutionService.startExecution(request, null);
+        
+        // Wait for execution to complete
+        Thread.sleep(100);
+        
+        // When & Then
+        assertThatThrownBy(() -> workflowExecutionService.cancelExecution(execution.getId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cannot cancel execution with status: COMPLETED");
     }
 }

@@ -31,18 +31,33 @@ states:
   reserve_inventory:
     type: Task
     resource: "inventoryService.reserve"
-    next: process_payment
+    next: wait_for_processing
     timeout: 30
-
-  process_payment:
-    type: Task
-    resource: "paymentService.charge"
-    next: fulfill_order
     retry:
       maxAttempts: 2
     catch:
       - errorType: "PaymentError"
         next: payment_failed
+
+  wait_for_processing:
+    type: Wait
+    seconds: 60
+    next: process_payment
+
+  process_payment:
+    type: Task
+    resource: "paymentService.charge"
+    next: wait_for_confirmation
+    retry:
+      maxAttempts: 2
+    catch:
+      - errorType: "PaymentError"
+        next: payment_failed
+
+  wait_for_confirmation:
+    type: Wait
+    timestamp: "2024-12-31T23:59:59Z"
+    next: fulfill_order
 
   fulfill_order:
     type: Task

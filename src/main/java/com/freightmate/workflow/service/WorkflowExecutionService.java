@@ -10,17 +10,19 @@ import com.freightmate.workflow.repository.*;
 import com.freightmate.workflow.task.TaskRegistry;
 import com.freightmate.workflow.task.TaskResult;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Timer;
+import jakarta.annotation.PostConstruct;
 
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class WorkflowExecutionService {
     
@@ -34,6 +36,40 @@ public class WorkflowExecutionService {
     private final TaskRegistry taskRegistry;
     private final ConditionEvaluatorService conditionEvaluatorService;
     private final ObjectMapper objectMapper;
+    private final MeterRegistry meterRegistry;
+    private Counter workflowExecutionCounter;
+    private Timer workflowExecutionTimer;
+    
+    public WorkflowExecutionService(
+            WorkflowRepository workflowRepository,
+            WorkflowVersionRepository workflowVersionRepository,
+            WorkflowExecutionRepository workflowExecutionRepository,
+            ExecutionStepRepository executionStepRepository,
+            ExecutionQueueRepository executionQueueRepository,
+            ExecutionHistoryRepository executionHistoryRepository,
+            IdempotencyKeyRepository idempotencyKeyRepository,
+            TaskRegistry taskRegistry,
+            ConditionEvaluatorService conditionEvaluatorService,
+            ObjectMapper objectMapper,
+            MeterRegistry meterRegistry) {
+        this.workflowRepository = workflowRepository;
+        this.workflowVersionRepository = workflowVersionRepository;
+        this.workflowExecutionRepository = workflowExecutionRepository;
+        this.executionStepRepository = executionStepRepository;
+        this.executionQueueRepository = executionQueueRepository;
+        this.executionHistoryRepository = executionHistoryRepository;
+        this.idempotencyKeyRepository = idempotencyKeyRepository;
+        this.taskRegistry = taskRegistry;
+        this.conditionEvaluatorService = conditionEvaluatorService;
+        this.objectMapper = objectMapper;
+        this.meterRegistry = meterRegistry;
+    }
+    
+    @PostConstruct
+    public void initializeMetrics() {
+        workflowExecutionCounter = meterRegistry.counter("workflow_executions_total", "workflow_name", "unknown");
+        workflowExecutionTimer = meterRegistry.timer("workflow_execution_duration_seconds", "workflow_name", "unknown");
+    }
     
     @Transactional
     public WorkflowExecutionResponse startExecution(WorkflowExecutionRequest request, String idempotencyKey) {
@@ -118,6 +154,9 @@ public class WorkflowExecutionService {
         addExecutionHistory(execution.getId(), startAt, "EXECUTION_STARTED", 
                 Map.of("workflowName", request.getWorkflowName(), "version", version.getVersion()));
         
+        // Record metrics
+        workflowExecutionCounter.increment();
+        
         log.info("Started workflow execution: {} for workflow: {}", executionId, request.getWorkflowName());
         
         return mapToExecutionResponse(execution);
@@ -170,6 +209,36 @@ public class WorkflowExecutionService {
                 .collect(Collectors.toList());
     }
     
+    @Transactional
+    public WorkflowExecutionResponse cancelExecution(Long executionId) {
+        WorkflowExecution execution = workflowExecutionRepository.findById(executionId)
+                .orElseThrow(() -> new IllegalArgumentException("Execution not found: " + executionId));
+        
+        if (execution.getStatus() == WorkflowExecution.ExecutionStatus.CANCELLED) {
+            return mapToExecutionResponse(execution);
+        }
+        
+        if (execution.getStatus() != WorkflowExecution.ExecutionStatus.RUNNING) {
+            throw new IllegalStateException("Cannot cancel execution with status: " + execution.getStatus());
+        }
+        
+        // Set execution status to CANCELLED
+        execution.setStatus(WorkflowExecution.ExecutionStatus.CANCELLED);
+        execution.setCompletedAt(OffsetDateTime.now());
+        workflowExecutionRepository.save(execution);
+        
+        // Add to execution history
+        addExecutionHistory(executionId, execution.getCurrentState(), "EXECUTION_CANCELLED", 
+                Map.of("cancelledAt", OffsetDateTime.now()));
+        
+        // Record metrics
+        workflowExecutionCounter.increment();
+        
+        log.info("Cancelled workflow execution: {}", executionId);
+        
+        return mapToExecutionResponse(execution);
+    }
+
     private Optional<WorkflowExecution> findExistingExecution(String idempotencyKey) {
         return idempotencyKeyRepository.findByKeyHash(idempotencyKey)
                 .filter(key -> key.getExpiresAt().isAfter(OffsetDateTime.now()))

@@ -90,6 +90,6 @@ public class ExecutionStep {
     private OffsetDateTime updatedAt;
     
     public enum StepStatus {
-        PENDING, RUNNING, COMPLETED, FAILED, RETRYING
+        PENDING, RUNNING, COMPLETED, FAILED, RETRYING, WAITING
     }
 }
