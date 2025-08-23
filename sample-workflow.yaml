@@ -1,0 +1,68 @@
+name: order_processing_workflow
+version: 1.0
+startAt: validate_order
+
+states:
+  validate_order:
+    type: Task
+    resource: "orderService.validate"
+    next: check_inventory
+    retry:
+      maxAttempts: 3
+      backoffMultiplier: 2
+    catch:
+      - errorType: "ValidationError"
+        next: order_failed
+
+  check_inventory:
+    type: Task
+    resource: "inventoryService.check"
+    next: inventory_decision
+
+  inventory_decision:
+    type: Choice
+    choices:
+      - condition:
+          variable: "$.inventoryAvailable"
+          booleanEquals: true
+        next: reserve_inventory
+    default: notify_backorder
+
+  reserve_inventory:
+    type: Task
+    resource: "inventoryService.reserve"
+    next: process_payment
+    timeout: 30
+
+  process_payment:
+    type: Task
+    resource: "paymentService.charge"
+    next: fulfill_order
+    retry:
+      maxAttempts: 2
+    catch:
+      - errorType: "PaymentError"
+        next: payment_failed
+
+  fulfill_order:
+    type: Task
+    resource: "fulfillmentService.ship"
+    next: order_success
+
+  notify_backorder:
+    type: Task
+    resource: "notificationService.backorder"
+    next: order_failed
+
+  payment_failed:
+    type: Task
+    resource: "paymentService.reverse"
+    next: order_failed
+
+  order_success:
+    type: Success
+
+  order_failed:
+    type: Fail
+    error: "OrderProcessingFailed"
+    cause: "Order could not be completed"
