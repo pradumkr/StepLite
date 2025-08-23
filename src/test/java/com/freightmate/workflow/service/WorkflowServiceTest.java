@@ -2,6 +2,7 @@ package com.freightmate.workflow.service;
 
 import com.freightmate.workflow.dto.WorkflowDefinitionDTO;
 import com.freightmate.workflow.dto.WorkflowResponseDTO;
+import com.freightmate.workflow.dto.StateDefinition;
 import com.freightmate.workflow.entity.Workflow;
 import com.freightmate.workflow.entity.WorkflowVersion;
 import com.freightmate.workflow.repository.WorkflowRepository;
@@ -72,9 +73,14 @@ class WorkflowServiceTest {
     @BeforeEach
     void setUp() {
         // Create valid workflow definition
-        Map<String, Object> states = new HashMap<>();
-        states.put("start", Map.of("type", "Task", "next", "end"));
-        states.put("end", Map.of("type", "Success"));
+        Map<String, StateDefinition> states = new HashMap<>();
+        states.put("start", StateDefinition.builder()
+                .type("Task")
+                .next("end")
+                .build());
+        states.put("end", StateDefinition.builder()
+                .type("Success")
+                .build());
 
         validDefinition = WorkflowDefinitionDTO.builder()
                 .name("test-workflow")
@@ -85,10 +91,18 @@ class WorkflowServiceTest {
                 .build();
 
         // Create YAML-style workflow definition
-        Map<String, Object> yamlStates = new HashMap<>();
-        yamlStates.put("initialize", Map.of("type", "Initialize", "next", "process"));
-        yamlStates.put("process", Map.of("type", "Process", "next", "finalize"));
-        yamlStates.put("finalize", Map.of("type", "Finalize"));
+        Map<String, StateDefinition> yamlStates = new HashMap<>();
+        yamlStates.put("initialize", StateDefinition.builder()
+                .type("Initialize")
+                .next("process")
+                .build());
+        yamlStates.put("process", StateDefinition.builder()
+                .type("Process")
+                .next("finalize")
+                .build());
+        yamlStates.put("finalize", StateDefinition.builder()
+                .type("Finalize")
+                .build());
 
         yamlDefinition = WorkflowDefinitionDTO.builder()
                 .name("yaml-workflow")
@@ -254,27 +268,37 @@ class WorkflowServiceTest {
     @Test
     void shouldHandleComplexJsonbData() {
         // Given - Create complex workflow definition
-        Map<String, Object> complexStates = new HashMap<>();
-        Map<String, Object> taskState = new HashMap<>();
-        taskState.put("type", "Task");
-        taskState.put("next", "choice");
-        taskState.put("parameters", Map.of(
-            "timeout", 300,
-            "retries", 3,
-            "metadata", Map.of("priority", "high", "tags", Arrays.asList("urgent", "critical"))
-        ));
+        Map<String, StateDefinition> complexStates = new HashMap<>();
         
-        Map<String, Object> choiceState = new HashMap<>();
-        choiceState.put("type", "Choice");
-        choiceState.put("choices", Arrays.asList(
-            Map.of("condition", "success", "next", "success"),
-            Map.of("condition", "failure", "next", "error")
-        ));
+        StateDefinition taskState = StateDefinition.builder()
+                .type("Task")
+                .next("choice")
+                .parameters(Map.of(
+                    "timeout", 300,
+                    "retries", 3,
+                    "metadata", Map.of("priority", "high", "tags", Arrays.asList("urgent", "critical"))
+                ))
+                .build();
+        
+        StateDefinition choiceState = StateDefinition.builder()
+                .type("Choice")
+                .parameters(Map.of(
+                    "choices", Arrays.asList(
+                        Map.of("condition", "success", "next", "success"),
+                        Map.of("condition", "failure", "next", "error")
+                    )
+                ))
+                .build();
         
         complexStates.put("start", taskState);
         complexStates.put("choice", choiceState);
-        complexStates.put("success", Map.of("type", "Success"));
-        complexStates.put("error", Map.of("type", "Fail", "error", "Workflow failed"));
+        complexStates.put("success", StateDefinition.builder()
+                .type("Success")
+                .build());
+        complexStates.put("error", StateDefinition.builder()
+                .type("Fail")
+                .parameters(Map.of("error", "Workflow failed"))
+                .build());
 
         WorkflowDefinitionDTO complexDefinition = WorkflowDefinitionDTO.builder()
                 .name("complex-workflow")

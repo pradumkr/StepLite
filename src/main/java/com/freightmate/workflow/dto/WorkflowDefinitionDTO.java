@@ -29,5 +29,5 @@ public class WorkflowDefinitionDTO {
     private String startAt;
     
     @NotNull(message = "Workflow states are required")
-    private Map<String, Object> states;
+    private Map<String, StateDefinition> states;
 }

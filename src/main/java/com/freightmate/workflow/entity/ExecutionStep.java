@@ -64,7 +64,22 @@ public class ExecutionStep {
     private Integer retryCount = 0;
     
     @Column(name = "max_retries", nullable = false)
-    private Integer maxRetries = 0;
+    private Integer maxRetries = 3;
+    
+    @Column(name = "backoff_multiplier")
+    private Double backoffMultiplier = 2.0;
+    
+    @Column(name = "initial_interval_ms")
+    private Long initialIntervalMs = 1000L;
+    
+    @Column(name = "timeout_seconds")
+    private Integer timeoutSeconds;
+    
+    @Column(name = "error_type")
+    private String errorType;
+    
+    @Column(name = "run_after_ts")
+    private OffsetDateTime runAfterTs;
     
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

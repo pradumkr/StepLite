@@ -1,6 +1,7 @@
 package com.freightmate.workflow.service;
 
 import com.freightmate.workflow.dto.ExecutionStepResponse;
+import com.freightmate.workflow.dto.ConditionConfig;
 import com.freightmate.workflow.entity.*;
 import com.freightmate.workflow.repository.*;
 import com.freightmate.workflow.task.TaskRegistry;
@@ -33,6 +34,7 @@ public class WorkflowWorkerService {
     private final ExecutionQueueRepository executionQueueRepository;
     private final ExecutionHistoryRepository executionHistoryRepository;
     private final TaskRegistry taskRegistry;
+    private final ConditionEvaluatorService conditionEvaluatorService;
     private final ObjectMapper objectMapper;
     
     @Scheduled(fixedDelay = 1000) // Poll every second
@@ -172,6 +174,10 @@ public class WorkflowWorkerService {
             Map<String, Object> input = step.getInputData();
             return taskRegistry.getHandler("mock").execute(input);
             
+        } else if ("Choice".equals(stepType)) {
+            // Choice state - evaluate conditions
+            return executeChoiceStep(step, execution);
+            
         } else if ("Success".equals(stepType)) {
             // Success state - execution completed
             return TaskResult.success(step.getInputData());
@@ -186,6 +192,65 @@ public class WorkflowWorkerService {
         }
     }
     
+    private TaskResult executeChoiceStep(ExecutionStep step, WorkflowExecution execution) {
+        log.info("🎯 Executing Choice step: {} for execution: {}", step.getStepName(), execution.getId());
+        
+        // Parse workflow definition to get choice configuration
+        Map<String, Object> definition = parseWorkflowDefinition(
+                execution.getWorkflowVersion().getDefinitionJsonb());
+        Map<String, Object> states = (Map<String, Object>) definition.get("states");
+        Map<String, Object> currentStateDef = (Map<String, Object>) states.get(step.getStepName());
+        
+        log.info("🎯 Current state definition: {}", currentStateDef);
+        
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> choices = (List<Map<String, Object>>) currentStateDef.get("choices");
+        String defaultChoice = (String) currentStateDef.get("defaultChoice");
+        
+        log.info("🎯 Found {} choices, defaultChoice: {}", choices != null ? choices.size() : 0, defaultChoice);
+        log.info("🎯 Step input data: {}", step.getInputData());
+        
+        if (choices != null) {
+            for (int i = 0; i < choices.size(); i++) {
+                Map<String, Object> choice = choices.get(i);
+                log.info("🎯 Evaluating choice {}: {}", i + 1, choice);
+                
+                Map<String, Object> conditionMap = (Map<String, Object>) choice.get("condition");
+                if (conditionMap != null) {
+                    log.info("🎯 Condition map: {}", conditionMap);
+                    
+                    ConditionConfig condition = mapToConditionConfig(conditionMap);
+                    log.info("🎯 Mapped condition: operator={}, variable={}, value={}", 
+                            condition.getOperator(), condition.getVariable(), condition.getValue());
+                    
+                    boolean conditionResult = conditionEvaluatorService.evaluateCondition(condition, step.getInputData());
+                    log.info("🎯 Condition evaluation result: {}", conditionResult);
+                    
+                    if (conditionResult) {
+                        String nextState = (String) choice.get("next");
+                        log.info("🎯 ✅ Condition matched! Next state: {}", nextState);
+                        if (nextState != null) {
+                            return TaskResult.success(Map.of("nextState", nextState));
+                        }
+                    } else {
+                        log.info("🎯 ❌ Condition did not match, trying next choice");
+                    }
+                } else {
+                    log.warn("🎯 ❌ Choice {} has no condition", i + 1);
+                }
+            }
+        }
+        
+        // Use default choice if no conditions match
+        if (defaultChoice != null) {
+            log.info("🎯 Using default choice: {}", defaultChoice);
+            return TaskResult.success(Map.of("nextState", defaultChoice));
+        }
+        
+        log.error("🎯 ❌ No matching choice found and no default specified!");
+        return TaskResult.failure("ChoiceError", "No matching choice found and no default specified");
+    }
+    
     private void moveToNextState(WorkflowExecution execution, ExecutionStep currentStep, Map<String, Object> stepOutput) {
         // Parse workflow definition to find next state
         Map<String, Object> definition = parseWorkflowDefinition(
@@ -193,7 +258,18 @@ public class WorkflowWorkerService {
         Map<String, Object> states = (Map<String, Object>) definition.get("states");
         Map<String, Object> currentStateDef = (Map<String, Object>) states.get(currentStep.getStepName());
         
-        String nextState = (String) currentStateDef.get("next");
+        String nextState = null;
+        
+        // Handle Choice states
+        if ("Choice".equals(currentStep.getStepType())) {
+            Object nextStateObj = stepOutput.get("nextState");
+            if (nextStateObj instanceof String) {
+                nextState = (String) nextStateObj;
+            }
+        } else {
+            // Regular states
+            nextState = (String) currentStateDef.get("next");
+        }
         
         if (nextState != null && states.containsKey(nextState)) {
             // Create next step
@@ -344,5 +420,67 @@ public class WorkflowWorkerService {
                 .build();
         
         executionHistoryRepository.save(history);
+    }
+    
+    private Integer getMaxRetries(Object stateDef) {
+        if (stateDef instanceof Map) {
+            Map<String, Object> stateMap = (Map<String, Object>) stateDef;
+            Map<String, Object> retry = (Map<String, Object>) stateMap.get("retry");
+            if (retry != null && retry.get("maxAttempts") != null) {
+                return (Integer) retry.get("maxAttempts");
+            }
+        }
+        return 3; // default
+    }
+    
+    private Double getBackoffMultiplier(Object stateDef) {
+        if (stateDef instanceof Map) {
+            Map<String, Object> stateMap = (Map<String, Object>) stateDef;
+            Map<String, Object> retry = (Map<String, Object>) stateMap.get("retry");
+            if (retry != null && retry.get("backoffMultiplier") != null) {
+                return (Double) retry.get("backoffMultiplier");
+            }
+        }
+        return 2.0; // default
+    }
+    
+    private Long getInitialIntervalMs(Object stateDef) {
+        if (stateDef instanceof Map) {
+            Map<String, Object> stateMap = (Map<String, Object>) stateDef;
+            Map<String, Object> retry = (Map<String, Object>) stateMap.get("retry");
+            if (retry != null && retry.get("initialIntervalMs") != null) {
+                return (Long) retry.get("initialIntervalMs");
+            }
+        }
+        return 1000L; // default
+    }
+    
+    private Integer getTimeoutSeconds(Object stateDef) {
+        if (stateDef instanceof Map) {
+            Map<String, Object> stateMap = (Map<String, Object>) stateDef;
+            if (stateMap.get("timeout") != null) {
+                return (Integer) stateMap.get("timeout");
+            }
+        }
+        return null; // no timeout
+    }
+    
+    private ConditionConfig mapToConditionConfig(Map<String, Object> conditionMap) {
+        log.info("🔧 Mapping condition map to ConditionConfig: {}", conditionMap);
+        
+        String operator = (String) conditionMap.get("operator");
+        String variable = (String) conditionMap.get("variable");
+        Object value = conditionMap.get("value");
+        
+        log.info("🔧 Extracted: operator={}, variable={}, value={}", operator, variable, value);
+        
+        ConditionConfig config = ConditionConfig.builder()
+                .operator(operator)
+                .variable(variable)
+                .value(value)
+                .build();
+        
+        log.info("🔧 Built ConditionConfig: {}", config);
+        return config;
     }
 }

@@ -3,13 +3,17 @@ package com.freightmate.workflow.controller;
 import com.freightmate.workflow.dto.WorkflowExecutionRequest;
 import com.freightmate.workflow.dto.WorkflowExecutionResponse;
 import com.freightmate.workflow.dto.ExecutionStepResponse;
+import com.freightmate.workflow.dto.ExecutionListRequest;
 import com.freightmate.workflow.service.WorkflowExecutionService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
+import java.time.OffsetDateTime;
+import java.util.List;
 
 @RestController
 @RequestMapping("/workflow-executions")
@@ -30,6 +34,35 @@ public class WorkflowExecutionController {
         WorkflowExecutionResponse response = workflowExecutionService.startExecution(request, idempotencyKey);
         
         return ResponseEntity.ok(response);
+    }
+    
+    @GetMapping
+    public ResponseEntity<List<WorkflowExecutionResponse>> listExecutions(
+            @RequestParam(required = false) List<String> statuses,
+            @RequestParam(required = false) String workflowName,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime startDate,
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) OffsetDateTime endDate,
+            @RequestParam(defaultValue = "50") Integer limit,
+            @RequestParam(defaultValue = "0") Integer offset,
+            @RequestParam(defaultValue = "createdAt") String sortBy,
+            @RequestParam(defaultValue = "DESC") String sortOrder) {
+        
+        log.info("Listing workflow executions with filters: workflowName={}, statuses={}, limit={}, offset={}", 
+                workflowName, statuses, limit, offset);
+        
+        ExecutionListRequest request = ExecutionListRequest.builder()
+                .statuses(statuses)
+                .workflowName(workflowName)
+                .startDate(startDate)
+                .endDate(endDate)
+                .limit(limit)
+                .offset(offset)
+                .sortBy(sortBy)
+                .sortOrder(sortOrder)
+                .build();
+        
+        List<WorkflowExecutionResponse> executions = workflowExecutionService.listExecutions(request);
+        return ResponseEntity.ok(executions);
     }
     
     @GetMapping("/{id}")

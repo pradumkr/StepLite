@@ -4,6 +4,7 @@ import com.freightmate.workflow.dto.WorkflowExecutionRequest;
 import com.freightmate.workflow.dto.WorkflowExecutionResponse;
 import com.freightmate.workflow.dto.ExecutionStepResponse;
 import com.freightmate.workflow.dto.ExecutionHistoryResponse;
+import com.freightmate.workflow.dto.ExecutionListRequest;
 import com.freightmate.workflow.entity.*;
 import com.freightmate.workflow.repository.*;
 import com.freightmate.workflow.task.TaskRegistry;
@@ -31,6 +32,7 @@ public class WorkflowExecutionService {
     private final ExecutionHistoryRepository executionHistoryRepository;
     private final IdempotencyKeyRepository idempotencyKeyRepository;
     private final TaskRegistry taskRegistry;
+    private final ConditionEvaluatorService conditionEvaluatorService;
     private final ObjectMapper objectMapper;
     
     @Transactional
@@ -147,6 +149,25 @@ public class WorkflowExecutionService {
                 .collect(Collectors.toList());
         
         return mapToStepResponse(step, history);
+    }
+    
+    @Transactional(readOnly = true)
+    public List<WorkflowExecutionResponse> listExecutions(ExecutionListRequest request) {
+        // Build dynamic query based on filters
+        List<WorkflowExecution> executions = workflowExecutionRepository.findByFilters(
+                request.getStatuses(),
+                request.getWorkflowName(),
+                request.getStartDate(),
+                request.getEndDate(),
+                request.getSortBy(),
+                request.getSortOrder(),
+                request.getLimit(),
+                request.getOffset()
+        );
+        
+        return executions.stream()
+                .map(this::mapToExecutionResponse)
+                .collect(Collectors.toList());
     }
     
     private Optional<WorkflowExecution> findExistingExecution(String idempotencyKey) {

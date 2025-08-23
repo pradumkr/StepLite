@@ -1,6 +1,9 @@
 package com.freightmate.workflow.integration;
 
 import com.freightmate.workflow.dto.WorkflowDefinitionDTO;
+import com.freightmate.workflow.dto.StateDefinition;
+import com.freightmate.workflow.dto.ChoiceConfig;
+import com.freightmate.workflow.dto.ConditionConfig;
 import com.freightmate.workflow.entity.Workflow;
 import com.freightmate.workflow.entity.WorkflowVersion;
 import com.freightmate.workflow.repository.WorkflowRepository;
@@ -78,83 +81,103 @@ class JsonbIntegrationTest {
     @Test
     void shouldStoreAndRetrieveComplexJsonbData() {
         // Given - Create a complex workflow definition
-        Map<String, Object> states = new HashMap<>();
+        Map<String, StateDefinition> states = new HashMap<>();
         
         // State 1: Initialize with complex parameters
-        Map<String, Object> initializeState = new HashMap<>();
-        initializeState.put("type", "Initialize");
-        initializeState.put("next", "process");
-        initializeState.put("parameters", Map.of(
-            "timeout", 300,
-            "retries", 3,
-            "metadata", Map.of(
-                "priority", "high",
-                "tags", List.of("urgent", "critical"),
-                "config", Map.of(
-                    "maxConcurrency", 5,
-                    "enableLogging", true,
-                    "nested", Map.of(
-                        "level1", Map.of(
-                            "level2", Map.of(
-                                "level3", "deep_value"
+        StateDefinition initializeState = StateDefinition.builder()
+                .type("Initialize")
+                .next("process")
+                .parameters(Map.of(
+                    "timeout", 300,
+                    "retries", 3,
+                    "metadata", Map.of(
+                        "priority", "high",
+                        "tags", List.of("urgent", "critical"),
+                        "config", Map.of(
+                            "maxConcurrency", 5,
+                            "enableLogging", true,
+                            "nested", Map.of(
+                                "level1", Map.of(
+                                    "level2", Map.of(
+                                        "level3", "deep_value"
+                                    )
+                                )
                             )
                         )
                     )
-                )
-            )
-        ));
+                ))
+                .build();
         states.put("initialize", initializeState);
 
         // State 2: Process with input/output paths
-        Map<String, Object> processState = new HashMap<>();
-        processState.put("type", "Task");
-        processState.put("next", "choice");
-        processState.put("inputPath", "$.data");
-        processState.put("outputPath", "$.result");
-        processState.put("retry", List.of(
-            Map.of("errorEquals", "States.Timeout", "maxAttempts", 3),
-            Map.of("errorEquals", "States.TaskFailed", "maxAttempts", 2)
-        ));
+        StateDefinition processState = StateDefinition.builder()
+                .type("Task")
+                .next("choice")
+                .parameters(Map.of(
+                    "inputPath", "$.data",
+                    "outputPath", "$.result",
+                    "retry", List.of(
+                        Map.of("errorEquals", "States.Timeout", "maxAttempts", 3),
+                        Map.of("errorEquals", "States.TaskFailed", "maxAttempts", 2)
+                    )
+                ))
+                .build();
         states.put("process", processState);
 
         // State 3: Choice with complex conditions
-        Map<String, Object> choiceState = new HashMap<>();
-        choiceState.put("type", "Choice");
-        choiceState.put("choices", List.of(
-            Map.of(
-                "condition", "success",
-                "next", "success",
-                "variable", "$.result.status",
-                "metadata", Map.of("description", "Success path")
-            ),
-            Map.of(
-                "condition", "failure",
-                "next", "error",
-                "variable", "$.result.error",
-                "metadata", Map.of("description", "Failure path")
-            ),
-            Map.of(
-                "condition", "retry",
-                "next", "process",
-                "variable", "$.result.retryCount",
-                "metadata", Map.of("description", "Retry path")
-            )
-        ));
+        List<ChoiceConfig> choices = List.of(
+            ChoiceConfig.builder()
+                .next("success")
+                .condition(ConditionConfig.builder()
+                    .operator("stringEquals")
+                    .variable("$.result.status")
+                    .value("success")
+                    .build())
+                .build(),
+            ChoiceConfig.builder()
+                .next("error")
+                .condition(ConditionConfig.builder()
+                    .operator("stringEquals")
+                    .variable("$.result.error")
+                    .value("failure")
+                    .build())
+                .build(),
+            ChoiceConfig.builder()
+                .next("process")
+                .condition(ConditionConfig.builder()
+                    .operator("numericGreaterThan")
+                    .variable("$.result.retryCount")
+                    .value(0)
+                    .build())
+                .build()
+        );
+        
+        StateDefinition choiceState = StateDefinition.builder()
+                .type("Choice")
+                .choices(choices)
+                .defaultChoice("success")
+                .build();
         states.put("choice", choiceState);
 
         // State 4: Success
-        states.put("success", Map.of("type", "Success"));
+        StateDefinition successState = StateDefinition.builder()
+                .type("Success")
+                .build();
+        states.put("success", successState);
 
         // State 5: Error with cause
-        Map<String, Object> errorState = new HashMap<>();
-        errorState.put("type", "Fail");
-        errorState.put("error", "Workflow failed");
-        errorState.put("cause", "Processing error occurred");
-        errorState.put("metadata", Map.of(
-            "errorCode", "WF_001",
-            "severity", "high",
-            "timestamp", System.currentTimeMillis()
-        ));
+        StateDefinition errorState = StateDefinition.builder()
+                .type("Fail")
+                .parameters(Map.of(
+                    "error", "Workflow failed",
+                    "cause", "Processing error occurred",
+                    "metadata", Map.of(
+                        "errorCode", "WF_001",
+                        "severity", "high",
+                        "timestamp", System.currentTimeMillis()
+                    )
+                ))
+                .build();
         states.put("error", errorState);
 
         WorkflowDefinitionDTO complexDefinition = WorkflowDefinitionDTO.builder()

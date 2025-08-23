@@ -1,0 +1,118 @@
+name: "enhanced-order-processing"
+version: "1.0.0"
+description: "Enhanced order processing workflow with Choice states, retries, and error handling"
+startAt: "validate"
+states:
+  validate:
+    type: "Task"
+    next: "check-inventory"
+    parameters:
+      taskType: "orderService.validate"
+      timeout: 5000
+    retry:
+      maxAttempts: 3
+      backoffMultiplier: 2.0
+      initialIntervalMs: 1000
+    catchBlocks:
+      - errorType: "TimeoutError"
+        next: "handle-timeout"
+      - errorType: "ValidationError"
+        next: "handle-validation-error"
+  
+  check-inventory:
+    type: "Task"
+    next: "inventory-choice"
+    parameters:
+      taskType: "inventoryService.check"
+      timeout: 3000
+    retry:
+      maxAttempts: 2
+      backoffMultiplier: 1.5
+      initialIntervalMs: 500
+  
+  inventory-choice:
+    type: "Choice"
+    choices:
+      - next: "process-order"
+        condition:
+          operator: "booleanEquals"
+          variable: "inStock"
+          value: true
+      - next: "backorder-process"
+        condition:
+          operator: "booleanEquals"
+          variable: "inStock"
+          value: false
+    defaultChoice: "process-order"
+  
+  process-order:
+    type: "Task"
+    next: "payment-choice"
+    parameters:
+      taskType: "orderService.process"
+      simulateError: false
+    retry:
+      maxAttempts: 3
+      backoffMultiplier: 2.0
+      initialIntervalMs: 2000
+    catchBlocks:
+      - errorType: "PaymentError"
+        next: "handle-payment-error"
+      - errorType: "TaskError"
+        next: "handle-task-error"
+  
+  payment-choice:
+    type: "Choice"
+    choices:
+      - next: "complete"
+        condition:
+          operator: "numericGreaterThan"
+          variable: "amount"
+          value: 100
+      - next: "fast-track"
+        condition:
+          operator: "numericLessThan"
+          variable: "amount"
+          value: 100
+    defaultChoice: "complete"
+  
+  backorder-process:
+    type: "Task"
+    next: "complete"
+    parameters:
+      taskType: "orderService.backorder"
+    timeout: 2000
+  
+  fast-track:
+    type: "Task"
+    next: "complete"
+    parameters:
+      taskType: "orderService.fastTrack"
+    timeout: 1000
+  
+  complete:
+    type: "Success"
+  
+  handle-timeout:
+    type: "Task"
+    next: "complete"
+    parameters:
+      taskType: "orderService.handleTimeout"
+  
+  handle-validation-error:
+    type: "Task"
+    next: "complete"
+    parameters:
+      taskType: "orderService.handleValidationError"
+  
+  handle-payment-error:
+    type: "Task"
+    next: "complete"
+    parameters:
+      taskType: "orderService.handlePaymentError"
+  
+  handle-task-error:
+    type: "Task"
+    next: "complete"
+    parameters:
+      taskType: "orderService.handleTaskError"

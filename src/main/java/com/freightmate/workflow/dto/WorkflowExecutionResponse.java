@@ -1,17 +1,13 @@
 package com.freightmate.workflow.dto;
 
-import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
 import java.time.OffsetDateTime;
 import java.util.Map;
 
 @Data
 @Builder
-@NoArgsConstructor
-@AllArgsConstructor
 public class WorkflowExecutionResponse {
     private Long id;
     private String executionId;
@@ -25,4 +21,6 @@ public class WorkflowExecutionResponse {
     private OffsetDateTime startedAt;
     private OffsetDateTime completedAt;
     private OffsetDateTime createdAt;
+    private Integer retryCount;
+    private Integer maxRetries;
 }
