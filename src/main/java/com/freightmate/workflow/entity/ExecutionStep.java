@@ -7,8 +7,12 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Type;
+import com.vladmihalcea.hibernate.type.json.JsonType;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 
 @Entity
 @Table(name = "execution_steps")
@@ -22,8 +26,11 @@ public class ExecutionStep {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
+    @Column(name = "execution_id", nullable = false)
+    private Long executionId;
+    
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "execution_id", nullable = false)
+    @JoinColumn(name = "execution_id", insertable = false, updatable = false)
     private WorkflowExecution execution;
     
     @Column(name = "step_name", nullable = false)
@@ -37,10 +44,12 @@ public class ExecutionStep {
     private StepStatus status = StepStatus.PENDING;
     
     @Column(name = "input_data", columnDefinition = "jsonb")
-    private String inputData;
+    @Type(JsonType.class)
+    private Map<String, Object> inputData;
     
     @Column(name = "output_data", columnDefinition = "jsonb")
-    private String outputData;
+    @Type(JsonType.class)
+    private Map<String, Object> outputData;
     
     @Column(name = "error_message")
     private String errorMessage;

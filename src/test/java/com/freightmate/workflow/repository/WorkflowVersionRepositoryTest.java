@@ -164,61 +164,59 @@ class WorkflowVersionRepositoryTest {
     @Test
     void shouldHandleComplexJsonbData() {
         // Create a version with complex nested JSONB data
-        String complexJsonb = """
-            {
-                "name": "complex-workflow",
-                "version": "3.0.0",
-                "description": "Complex workflow with nested structures",
-                "startAt": "initialize",
-                "states": {
-                    "initialize": {
-                        "type": "Initialize",
-                        "next": "process",
-                        "parameters": {
-                            "timeout": 300,
-                            "retries": 3,
-                            "metadata": {
-                                "priority": "high",
-                                "tags": ["urgent", "critical"],
-                                "config": {
-                                    "maxConcurrency": 5,
-                                    "enableLogging": true
-                                }
-                            }
-                        }
-                    },
-                    "process": {
-                        "type": "Task",
-                        "next": "choice",
-                        "inputPath": "$.data",
-                        "outputPath": "$.result"
-                    },
-                    "choice": {
-                        "type": "Choice",
-                        "choices": [
-                            {
-                                "condition": "success",
-                                "next": "success",
-                                "variable": "$.result.status"
-                            },
-                            {
-                                "condition": "failure",
-                                "next": "error",
-                                "variable": "$.result.error"
-                            }
-                        ]
-                    },
-                    "success": {
-                        "type": "Success"
-                    },
-                    "error": {
-                        "type": "Fail",
-                        "error": "Workflow failed",
-                        "cause": "Processing error occurred"
-                    }
-                }
-            }
-            """;
+        String complexJsonb = "{" +
+            "\"name\": \"complex-workflow\"," +
+            "\"version\": \"3.0.0\"," +
+            "\"description\": \"Complex workflow with nested structures\"," +
+            "\"startAt\": \"initialize\"," +
+            "\"states\": {" +
+                "\"initialize\": {" +
+                    "\"type\": \"Initialize\"," +
+                    "\"next\": \"process\"," +
+                    "\"parameters\": {" +
+                        "\"timeout\": 300," +
+                        "\"retries\": 3," +
+                        "\"metadata\": {" +
+                            "\"priority\": \"high\"," +
+                            "\"tags\": [\"urgent\", \"critical\"]," +
+                            "\"config\": {" +
+                                "\"maxConcurrency\": 5," +
+                                "\"enableLogging\": true" +
+                            "}" +
+                        "}" +
+                    "}" +
+                "}," +
+                "\"process\": {" +
+                    "\"type\": \"Task\"," +
+                    "\"next\": \"choice\"," +
+                    "\"inputPath\": \"$.data\"," +
+                    "\"outputPath\": \"$.result\"" +
+                "}," +
+                "\"choice\": {" +
+                    "\"type\": \"Choice\"," +
+                    "\"choices\": [" +
+                        "{" +
+                            "\"condition\": \"success\"," +
+                            "\"next\": \"success\"," +
+                            "\"variable\": \"$.result.status\"" +
+                        "}," +
+                        "{" +
+                            "\"condition\": \"failure\"," +
+                            "\"next\": \"error\"," +
+                            "\"variable\": \"$.result.error\"" +
+                        "}" +
+                    "]" +
+                "}," +
+                "\"success\": {" +
+                    "\"type\": \"Success\"" +
+                "}," +
+                "\"error\": {" +
+                    "\"type\": \"Fail\"," +
+                    "\"error\": \"Workflow failed\"," +
+                    "\"cause\": \"Processing error occurred\"" +
+                "}" +
+            "}" +
+        "}";
 
         WorkflowVersion complexVersion = WorkflowVersion.builder()
                 .workflow(testWorkflow)
@@ -262,20 +260,18 @@ class WorkflowVersionRepositoryTest {
     @Test
     void shouldHandleSpecialCharactersInJsonb() {
         // Test JSONB with special characters, unicode, and escape sequences
-        String specialJsonb = """
-            {
-                "name": "special-chars-test",
-                "version": "4.0.0",
-                "description": "Test with special characters: \\"quotes\\", \\nnewlines\\n, \\ttabs\\t, \\u00E9 (é), \\u00F1 (ñ)",
-                "metadata": {
-                    "special": "\\"quoted\\" string",
-                    "multiline": "line1\\nline2\\nline3",
-                    "unicode": "café mañana",
-                    "path": "C:\\\\Users\\\\Test\\\\file.txt",
-                    "regex": "\\d+\\s+\\w+"
-                }
-            }
-            """;
+        String specialJsonb = "{" +
+            "\"name\": \"special-chars-test\"," +
+            "\"version\": \"4.0.0\"," +
+            "\"description\": \"Test with special characters: \\\"quotes\\\", \\nnewlines\\n, \\ttabs\\t, \\u00E9 (é), \\u00F1 (ñ)\"," +
+            "\"metadata\": {" +
+                "\"special\": \"\\\"quoted\\\" string\"," +
+                "\"multiline\": \"line1\\nline2\\nline3\"," +
+                "\"unicode\": \"café mañana\"," +
+                "\"path\": \"C:\\\\Users\\\\Test\\\\file.txt\"," +
+                "\"regex\": \"\\d+\\s+\\w+\"" +
+            "}" +
+        "}";
 
         WorkflowVersion specialVersion = WorkflowVersion.builder()
                 .workflow(testWorkflow)

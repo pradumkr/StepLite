@@ -22,8 +22,11 @@ public class ExecutionQueue {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     
+    @Column(name = "execution_id", nullable = false)
+    private Long executionId;
+    
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "execution_id", nullable = false)
+    @JoinColumn(name = "execution_id", insertable = false, updatable = false)
     private WorkflowExecution execution;
     
     @Column(name = "priority", nullable = false)

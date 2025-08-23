@@ -1,0 +1,19 @@
+name: "simple-test-workflow"
+version: "1.0.0"
+description: "Simple test workflow for execution engine testing"
+startAt: "start"
+states:
+  start:
+    type: "Task"
+    next: "process"
+    parameters:
+      taskType: "mock"
+      timeout: 1000
+  process:
+    type: "Task"
+    next: "complete"
+    parameters:
+      taskType: "mock"
+      simulateError: false
+  complete:
+    type: "Success"

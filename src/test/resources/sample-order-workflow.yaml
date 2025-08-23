@@ -1,0 +1,19 @@
+name: "order-processing"
+version: "1.0.0"
+description: "Simple order processing workflow for testing"
+startAt: "validate"
+states:
+  validate:
+    type: "Task"
+    next: "process"
+    parameters:
+      taskType: "orderService.validate"
+      timeout: 2000
+  process:
+    type: "Task"
+    next: "complete"
+    parameters:
+      taskType: "orderService.process"
+      simulateError: false
+  complete:
+    type: "Success"

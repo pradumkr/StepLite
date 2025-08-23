@@ -31,6 +31,19 @@ public interface ExecutionQueueRepository extends JpaRepository<ExecutionQueue, 
         @Param("limit") int limit
     );
     
+    @Query(value = """
+        SELECT eq.* FROM execution_queue eq 
+        WHERE eq.status = 'QUEUED' 
+        AND eq.scheduled_at <= :currentTime
+        ORDER BY eq.priority DESC, eq.scheduled_at ASC 
+        LIMIT :limit 
+        FOR UPDATE SKIP LOCKED
+        """, nativeQuery = true)
+    List<ExecutionQueue> findQueuedItemsForProcessing(
+        @Param("currentTime") OffsetDateTime currentTime,
+        @Param("limit") int limit
+    );
+    
     Optional<ExecutionQueue> findByExecutionId(Long executionId);
     
     @Query("SELECT eq FROM ExecutionQueue eq WHERE eq.execution.id = :executionId")

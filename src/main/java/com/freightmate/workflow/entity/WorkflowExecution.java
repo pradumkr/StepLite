@@ -7,8 +7,12 @@ import lombok.AllArgsConstructor;
 import lombok.Builder;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Type;
+import com.vladmihalcea.hibernate.type.json.JsonType;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 
 @Entity
 @Table(name = "workflow_executions")
@@ -37,10 +41,12 @@ public class WorkflowExecution {
     private String currentState;
     
     @Column(name = "input_data", columnDefinition = "jsonb")
-    private String inputData;
+    @Type(JsonType.class)
+    private Map<String, Object> inputData;
     
     @Column(name = "output_data", columnDefinition = "jsonb")
-    private String outputData;
+    @Type(JsonType.class)
+    private Map<String, Object> outputData;
     
     @Column(name = "error_message")
     private String errorMessage;
