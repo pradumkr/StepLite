@@ -284,7 +284,8 @@ workflow:
 - Steps marked as FAILED with error message
 - Execution marked as FAILED
 - Error details stored in execution history
-- No automatic retry (manual intervention required)
+- **No automatic retry (manual intervention required)**
+- **Note**: Retry mechanisms are planned but not yet implemented
 
 ### System Failures
 
@@ -295,9 +296,9 @@ workflow:
 
 ## Future Enhancements
 
-- **Retry Logic** - Automatic retry with exponential backoff
-- **Parallel Execution** - Support for concurrent step execution
+- **Retry Logic** - Automatic retry with exponential backoff (planned)
+- **Parallel Execution** - Support for concurrent step execution (planned)
 - **Conditional Transitions** - Dynamic next state based on step output
-- **Sub-workflows** - Nested workflow execution
-- **Event-driven** - Trigger workflows on external events
+- **Sub-workflows** - Nested workflow execution (planned)
+- **Event-driven** - Trigger workflows on external events (planned)
 - **Scheduling** - Time-based workflow execution
