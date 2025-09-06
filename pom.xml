@@ -12,11 +12,11 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.freightmate</groupId>
-    <artifactId>workflow-engine</artifactId>
+    <groupId>com.thesmartway</groupId>
+    <artifactId>steplite</artifactId>
     <version>1.0.0</version>
-    <name>workflow-engine</name>
-    <description>Distributed Workflow Engine</description>
+    <name>steplite</name>
+    <description>StepLite - A lightweight distributed workflow engine inspired by AWS Step Functions</description>
 
     <properties>
         <java.version>21</java.version>

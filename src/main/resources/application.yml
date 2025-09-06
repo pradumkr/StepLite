@@ -1,6 +1,6 @@
 spring:
   application:
-    name: workflow-engine
+    name: steplite
   
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:workflow_engine}
@@ -43,7 +43,7 @@ server:
 
 logging:
   level:
-    com.freightmate.workflow: DEBUG
+    com.thesmartway.steplite: DEBUG
     org.flywaydb: INFO
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE

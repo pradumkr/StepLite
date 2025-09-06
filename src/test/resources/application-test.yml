@@ -25,7 +25,7 @@ spring:
 
 logging:
   level:
-    com.freightmate.workflow: DEBUG
+    com.thesmartway.steplite: DEBUG
     org.hibernate.SQL: DEBUG
     org.hibernate.type.descriptor.sql.BasicBinder: TRACE
     org.springframework.test: DEBUG

@@ -1,6 +1,6 @@
-# Workflow Engine Documentation
+# StepLite Documentation
 
-Welcome to the Distributed Workflow Engine documentation. This system provides a robust, scalable workflow orchestration platform similar to AWS Step Functions.
+Welcome to the StepLite documentation. StepLite is a lightweight, distributed workflow engine inspired by AWS Step Functions, providing a simple yet powerful way to orchestrate complex business processes.
 
 ## Documentation Index
 
