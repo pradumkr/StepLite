@@ -54,7 +54,7 @@ class WorkflowVersionRepositoryTest {
     private WorkflowVersionRepository workflowVersionRepository;
 
     @Autowired
-    private com.freightmate.workflow.repository.WorkflowRepository workflowRepository;
+    private com.thesmartway.steplite.repository.WorkflowRepository workflowRepository;
 
     private Workflow testWorkflow;
     private WorkflowVersion testVersion;
